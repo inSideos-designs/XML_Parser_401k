@@ -1,0 +1,5 @@
+{
+    "error": "python exited 1",
+    "stderr": "Traceback (most recent call last):\n  File \"/Users/cultistsid/Desktop/ai-xml-prompt-filler/server/process_local.py\", line 241, in <module>\n    raise SystemExit(main())\n                     ~~~~^^\n  File \"/Users/cultistsid/Desktop/ai-xml-prompt-filler/server/process_local.py\", line 207, in main\n    xml_flags[xml_item['name']] = parse_xml_linknames(ET.fromstring(xml_item['content']))\n                                  ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/cultistsid/Desktop/Test Folder/fill_plan_data.py\", line 61, in parse_xml_linknames\n    tree = ET.parse(xml_path)\n  File \"/opt/homebrew/Cellar/python@3.13/3.13.5/Frameworks/Python.framework/Versions/3.13/lib/python3.13/xml/etree/ElementTree.py\", line 1204, in parse\n    tree.parse(source, parser)\n    ~~~~~~~~~~^^^^^^^^^^^^^^^^\n  File \"/opt/homebrew/Cellar/python@3.13/3.13.5/Frameworks/Python.framework/Versions/3.13/lib/python3.13/xml/etree/ElementTree.py\", line 558, in parse\n    source = open(source, \"rb\")\nTypeError: expected str, bytes or os.PathLike object, not Element\n",
+    "stdout": ""
+}

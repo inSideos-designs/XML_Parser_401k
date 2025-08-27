@@ -1,0 +1,5 @@
+{
+  "name": "AI XML Prompt Filler",
+  "description": "An intelligent tool to batch-process XML files by generating relevant prompts with AI and extracting the corresponding data into a structured table, ready for download.",
+  "requestFramePermissions": []
+}
