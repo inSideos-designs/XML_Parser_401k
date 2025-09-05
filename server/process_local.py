@@ -204,7 +204,32 @@ def main() -> int:
     # Pre-parse all XMLs
     xml_flags: Dict[str, Dict[str, object]] = {}
     for xml_item in xml_items:
-        xml_flags[xml_item['name']] = parse_xml_linknames(ET.fromstring(xml_item['content']))
+        name = xml_item.get('name') or 'input.xml'
+        content = xml_item.get('content') or ''
+        # Some versions of fill_plan_data.parse_xml_linknames expect a file path,
+        # others may accept an Element. Try Element first, then fall back to temp file path.
+        flags = None
+        try:
+            flags = parse_xml_linknames(ET.fromstring(content))
+        except Exception:
+            try:
+                import tempfile
+                import os
+                with tempfile.NamedTemporaryFile('w', delete=False, suffix='_'+name) as tf:
+                    tf.write(content)
+                    tmp_path = tf.name
+                try:
+                    flags = parse_xml_linknames(tmp_path)
+                finally:
+                    try:
+                        os.unlink(tmp_path)
+                    except Exception:
+                        pass
+            except Exception:
+                flags = None
+        if flags is None:
+            flags = {}
+        xml_flags[name] = flags
 
     # Build output header
     column_labels: List[str] = [item['name'] for item in xml_items]
