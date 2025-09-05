@@ -12,7 +12,7 @@ This contains everything you need to run your app locally.
 2. Run the app:
    `npm run dev`
 
-This version uses a local XML extraction service (no Gemini). The Prompt CSV must contain columns `Prompt` and `Proposed LinkName`. The `Proposed LinkName` is used to match XML LinkName/PlanData fields.
+This version uses a local XML extraction service. The Prompt CSV must contain columns `Prompt` and `Proposed LinkName`. The `Proposed LinkName` is used to match XML LinkName/PlanData fields.
 
 ## Advanced (Python Working Logic)
 
