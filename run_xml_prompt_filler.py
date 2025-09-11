@@ -45,44 +45,32 @@ def build_payload(source_dir: Path) -> dict:
 
 
 def run_processor(payload: dict) -> dict:
-    if not PROCESSOR.exists():
-        raise SystemExit(f"Processor not found: {PROCESSOR}")
+    # Run in-process to avoid stdout buffering quirks
+    sys.path.insert(0, str(ROOT))
+    import importlib, io
+    pl = importlib.import_module('server.process_local')
+    orig_stdin, orig_stdout = sys.stdin, sys.stdout
     try:
-        completed = subprocess.run(
-            [sys.executable, str(PROCESSOR)],
-            input=json.dumps(payload),
-            text=True,
-            capture_output=True,
-            cwd=str(ROOT),
-        )
-    except FileNotFoundError:
-        # Fallback to python3 on PATH
-        completed = subprocess.run(
-            ['python3', str(PROCESSOR)],
-            input=json.dumps(payload),
-            text=True,
-            capture_output=True,
-            cwd=str(ROOT),
-        )
-
-    stdout = completed.stdout or ''
-    stderr = completed.stderr or ''
-
-    if completed.returncode != 0:
-        # Try to parse error JSON if any, else surface stderr
+        sys.stdin = io.StringIO(json.dumps(payload))
+        buf = io.StringIO()
+        sys.stdout = buf
+        rc = pl.main()
+        out = buf.getvalue()
+    finally:
+        sys.stdin, sys.stdout = orig_stdin, orig_stdout
+    if rc != 0:
+        # Try error JSON
         try:
-            data = json.loads(stdout)
+            data = json.loads(out)
         except Exception:
             data = None
         if data and isinstance(data, dict) and 'error' in data:
-            raise SystemExit(f"Processor error: {data['error']}\n{stderr}")
-        else:
-            raise SystemExit(f"Processor failed with exit code {completed.returncode}.\nSTDERR:\n{stderr}\nSTDOUT:\n{stdout}")
-
+            raise SystemExit(f"Processor error: {data['error']}")
+        raise SystemExit(f"Processor failed with exit code {rc}.\nOutput was:\n{out}")
     try:
-        return json.loads(stdout)
+        return json.loads(out)
     except json.JSONDecodeError as e:
-        raise SystemExit(f"Processor returned non-JSON output.\n{e}\nOutput was:\n{stdout}")
+        raise SystemExit(f"Processor returned non-JSON output.\n{e}\nOutput was:\n{out}")
 
 
 def main() -> int:
