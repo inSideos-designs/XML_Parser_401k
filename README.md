@@ -33,3 +33,23 @@ For parity with your prior "good" results, run the local Python backend and enab
 Notes:
 - The backend adds CORS headers for the dev UI.
 - If your Working Logic lives elsewhere, update `server/server.py` to point to it.
+
+## Importing Map/Data Points (once)
+
+To run fully offline without Excel files at runtime, import your Map and Data Points once. Export your Excel sheets to CSV first, then run:
+
+```
+python3 tools/import_from_csv.py \
+  --map-csv /path/to/Map.csv \
+  --datapoints-csv /path/to/PlanExpress.csv
+```
+
+This writes two JSON files to `~/.xml-prompt-filler/`:
+- `defaultMap.json` — list of `{ prompt, linknames, quick }`
+- `optionsByPrompt.json` — object mapping `{ PROMPT: "Options Allowed" }`
+
+The app automatically prefers the user store before the packaged defaults.
+
+Alternatively, via the server API:
+- POST `/admin/import-csv` with `multipart/form-data` fields `map_csv` and `datapoints_csv`.
+- POST `/admin/import-json` with body `{ map: [...], options: {...} }`.

@@ -71,7 +71,7 @@ const App: React.FC = () => {
         }
       } catch (err) {
         console.error('Failed to auto-load local directory maps', err);
-        setError('Could not auto-load local Map/Data Points from Desktop/Test Folder. You can upload CSVs instead.');
+        setError('Could not auto-load map/options from local config. You can upload CSVs instead.');
       }
     }
     if (useLocalDirMaps) {
@@ -150,7 +150,7 @@ const App: React.FC = () => {
               <div className="mb-3">
                 <label className="inline-flex items-center space-x-2">
                   <input type="checkbox" className="h-4 w-4" checked={useLocalDirMaps} onChange={(e) => setUseLocalDirMaps(e.target.checked)} />
-                  <span className="text-sm text-slate-700">Auto-load from Desktop/Test Folder (no uploads)</span>
+                  <span className="text-sm text-slate-700">Auto-load local config (no uploads)</span>
                 </label>
               </div>
               {!useLocalDirMaps && (

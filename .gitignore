@@ -12,3 +12,9 @@ server/.venv/
 __pycache__/
 *.swp
 *.swo
+
+# Local artifacts
+output.csv
+output.json
+Map.csv
+PlanExpress.csv

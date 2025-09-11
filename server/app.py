@@ -1,30 +1,121 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import csv
 import json
 import os
-import runpy
 import tempfile
+from io import TextIOWrapper
 from pathlib import Path
-from typing import List
+from typing import List, Dict, Any, Optional
 
 from flask import Flask, request, jsonify, make_response
+from .logic import (
+    normalize_text,
+    parse_xml_flags_from_string,
+    choose_value_for_map_entry,
+    enforce_yes_no,
+    pick_from_options_allowed,
+)
 
 app = Flask(__name__)
 
 
 HERE = Path(__file__).resolve().parent
-DEFAULT_WORKING_LOGIC = Path.home() / 'Desktop' / 'Working Logic '
-FALLBACK_WORKING_LOGIC = Path.home() / 'Desktop' / 'Test Folder'
 
 
-def load_working_logic_module():
-    candidates = [DEFAULT_WORKING_LOGIC, FALLBACK_WORKING_LOGIC]
-    for base in candidates:
-        fp = base / 'fill_plan_data.py'
-        if fp.exists():
-            return runpy.run_path(str(fp))
-    raise RuntimeError('Could not find fill_plan_data.py in Working Logic or Test Folder')
+def load_map_entries() -> Optional[List[Dict[str, Any]]]:
+    """Load map entries from user store (~/.xml-prompt-filler) or bundled maps."""
+    user_path = Path.home() / '.xml-prompt-filler' / 'defaultMap.json'
+    for json_path in (user_path, HERE.parent / 'maps' / 'defaultMap.json'):
+        try:
+            if json_path.exists():
+                data = json.loads(json_path.read_text())
+                if isinstance(data, list):
+                    out: List[Dict[str, Any]] = []
+                    for item in data:
+                        if not isinstance(item, dict):
+                            continue
+                        out.append({
+                            'prompt': str(item.get('prompt', '')),
+                            'linknames': str(item.get('linknames', '')),
+                            'quick': str(item.get('quick', '')),
+                        })
+                    return out
+        except Exception:
+            continue
+    return None
+
+
+def load_options_by_prompt() -> Optional[Dict[str, str]]:
+    """Load options mapping from user store or bundled maps."""
+    user_path = Path.home() / '.xml-prompt-filler' / 'optionsByPrompt.json'
+    for json_path in (user_path, HERE.parent / 'maps' / 'optionsByPrompt.json'):
+        try:
+            if json_path.exists():
+                data = json.loads(json_path.read_text())
+                if isinstance(data, dict):
+                    return {str(k): str(v or '') for k, v in data.items()}
+                if isinstance(data, list):
+                    out: Dict[str, str] = {}
+                    for item in data:
+                        if isinstance(item, dict) and 'key' in item:
+                            out[str(item.get('key') or '')] = str(item.get('value') or '')
+                    return out
+        except Exception:
+            continue
+    return None
+
+
+def _parse_csv_map(file_storage) -> List[Dict[str, str]]:
+    """Parse an uploaded Map CSV into entries: [{prompt, linknames, quick}].
+    Expects headers including Prompt and Proposed LinkName. Quick is optional.
+    """
+    # Decode with utf-8-sig to drop BOM if present
+    text = file_storage.read().decode('utf-8-sig', errors='replace')
+    reader = csv.DictReader(text.splitlines())
+    # Normalize header keys
+    def get_row_val(row: Dict[str, str], *candidates: str) -> str:
+        for k in row.keys():
+            for cand in candidates:
+                if k.strip().lower() == cand.strip().lower():
+                    return str(row.get(k) or '').strip()
+        return ''
+    out: List[Dict[str, str]] = []
+    for row in reader:
+        prompt = get_row_val(row, 'Prompt')
+        linknames = get_row_val(row, 'Proposed LinkName', 'Proposed Linkname', 'LinkNames', 'Linknames')
+        quick = get_row_val(row, 'Quick', 'Quick Text')
+        if not prompt:
+            continue
+        out.append({'prompt': prompt, 'linknames': linknames, 'quick': quick})
+    return out
+
+
+def _parse_csv_options(file_storage) -> Dict[str, str]:
+    """Parse uploaded Data Points CSV into a mapping: { PROMPT -> Options Allowed }"""
+    text = file_storage.read().decode('utf-8-sig', errors='replace')
+    reader = csv.DictReader(text.splitlines())
+    # Identify columns by case-insensitive names
+    fieldnames = [fn.strip() for fn in (reader.fieldnames or [])]
+    def key_for(names: List[str]) -> Optional[str]:
+        for want in names:
+            for fn in fieldnames:
+                if fn.lower() == want.lower():
+                    return fn
+        return None
+    k_prompt = key_for(['PROMPT', 'Prompt'])
+    k_options = key_for(['Options Allowed', 'Options'])
+    if not k_prompt or not k_options:
+        raise ValueError('CSV missing required columns: PROMPT and Options Allowed')
+    out: Dict[str, str] = {}
+    for row in reader:
+        p = str(row.get(k_prompt) or '').strip()
+        if not p:
+            continue
+        oa = str(row.get(k_options) or '').strip()
+        out[p] = oa
+    return out
 
 
 @app.after_request
@@ -56,86 +147,60 @@ def process():
                 'received_file_keys': list(request.files.keys()),
             }), 400)
 
-        with tempfile.TemporaryDirectory() as td:
-            td_path = Path(td)
-            if use_defaults:
-                # Find default files on Desktop/Test Folder
-                default_map = (Path.home() / 'Desktop' / 'Test Folder' / 'Map Updated 8152025.xlsx')
-                if not default_map.exists():
-                    # Try auto-derived CSV
-                    default_map = Path.home() / 'Desktop' / 'Test Folder' / 'Map_AutoDerived.csv'
-                default_dp = Path.home() / 'Desktop' / 'Test Folder' / 'TPA Data Points_PE_Module_FeeUI - Wave 1 (1).xlsx'
-                if not (default_map.exists() and default_dp.exists()):
-                    return make_response(jsonify({'error': 'Default Map/Data Points not found on server. Provide files or place them in Desktop/Test Folder.'}), 400)
-                map_path = default_map
-                datapoints_path = default_dp
-            else:
-                map_path = td_path / (map_file.filename or 'map.xlsx')
-                datapoints_path = td_path / (datapoints_file.filename or 'datapoints.xlsx')
-                map_file.save(str(map_path))
-                datapoints_file.save(str(datapoints_path))
-            xml_paths: List[Path] = []
-            for xf in xml_files:
-                p = td_path / (xf.filename or 'file.xml')
-                xf.save(str(p))
-                xml_paths.append(p)
-
-            mod = load_working_logic_module()
-            parse_map_workbook = mod['parse_map_workbook']
-            read_xlsx_named_sheet_rows = mod['read_xlsx_named_sheet_rows']
-            parse_lov = mod['parse_lov']
-            parse_xml_linknames = mod['parse_xml_linknames']
-            choose_value_for_map_entry = mod['choose_value_for_map_entry']
-            _enforce_yes_no = mod['_enforce_yes_no']
-            fallback_from_lov = mod['fallback_from_lov']
-            pick_from_options_allowed = mod['pick_from_options_allowed']
-            normalize_text = mod['normalize_text']
-
-            rows = read_xlsx_named_sheet_rows(datapoints_path, 'Plan Express Data Points')
-            if not rows:
-                return make_response(jsonify({'error': 'Could not read Plan Express Data Points sheet'}), 400)
-            header = rows[0]
-            header_norm = [h.strip() for h in header]
+        # Build flags from uploaded XMLs
+        file_names: List[str] = []
+        flags_per_file: List[Dict[str, Any]] = []
+        for xf in xml_files:
+            name = xf.filename or 'file.xml'
             try:
-                i_prompt = header_norm.index('PROMPT')
-            except ValueError:
-                i_prompt = next((i for i, h in enumerate(header) if 'PROMPT' in (h or '')), -1)
-            i_options = header_norm.index('Options Allowed') if 'Options Allowed' in header_norm else -1
-            i_page = header_norm.index('Page') if 'Page' in header_norm else -1
-            i_seq = header_norm.index('Seq') if 'Seq' in header_norm else -1
+                content = xf.read().decode('utf-8')
+            except UnicodeDecodeError:
+                content = xf.read().decode('latin1', errors='ignore')
+            file_names.append(name)
+            flags_per_file.append(parse_xml_flags_from_string(content))
 
-            map_data = parse_map_workbook(map_path)
-            lov = parse_lov(datapoints_path)
+        # Decide data source
+        if use_defaults:
+            packaged_map = load_map_entries()
+            packaged_opts = load_options_by_prompt()
+            if not (packaged_map and packaged_opts):
+                return make_response(jsonify({'error': 'No packaged Map/Options found. Upload CSVs for map_file and datapoints_file.'}), 400)
+            entries = packaged_map
+            options_by_prompt = packaged_opts
+        else:
+            try:
+                entries = _parse_csv_map(map_file)
+                options_by_prompt = _parse_csv_options(datapoints_file)
+            except Exception as e:
+                return make_response(jsonify({'error': f'Failed to parse uploaded CSV files: {e}. Please upload CSV, not Excel.'}), 400)
 
-            file_names = [p.name for p in xml_paths]
-            flags_per_file = [parse_xml_linknames(p) for p in xml_paths]
+        # Build normalized map
+        map_data: Dict[str, Dict[str, Any]] = {}
+        for e in entries:
+            ptxt = normalize_text(str(e.get('prompt') or ''))
+            if ptxt:
+                map_data[ptxt] = e
 
-            out_rows = []
-            for r in rows[1:]:
-                prompt = normalize_text(r[i_prompt] if 0 <= i_prompt < len(r) else '')
-                if not prompt:
-                    continue
-                options = (r[i_options] if (0 <= i_options < len(r)) else '').strip()
-                page = (r[i_page] if (0 <= i_page < len(r)) else '').strip()
-                seq = (r[i_seq] if (0 <= i_seq < len(r)) else '').strip()
+        out_rows: List[Dict[str, Any]] = []
+        for e in entries:
+            orig_prompt = str(e.get('prompt') or '')
+            prompt = normalize_text(orig_prompt)
+            options = options_by_prompt.get(orig_prompt, '')
+            me = map_data.get(prompt)
+            values = {}
+            for fname, flags in zip(file_names, flags_per_file):
+                val = None
+                if me:
+                    val = choose_value_for_map_entry(me, options, flags, prompt)
+                    val = enforce_yes_no(prompt, options, val, flags, me, strict=False)
+                if val is None:
+                    pick = pick_from_options_allowed(options)
+                    if pick:
+                        val = pick
+                values[fname] = val if val is not None else ''
+            out_rows.append({'promptText': orig_prompt, 'values': values})
 
-                me = map_data.get(prompt)
-                values = {}
-                for fname, flags in zip(file_names, flags_per_file):
-                    val = None
-                    if me:
-                        val = choose_value_for_map_entry(me, options, flags, prompt)
-                        val = _enforce_yes_no(prompt, options, val, flags, me, strict=False)
-                    if val is None:
-                        val = fallback_from_lov(page, seq, options, lov)
-                    if val is None:
-                        pick = pick_from_options_allowed(options)
-                        if pick:
-                            val = pick
-                    values[fname] = val if val is not None else ''
-                out_rows.append({'promptText': prompt, 'values': values})
-
-            return jsonify({'fileNames': file_names, 'rows': out_rows})
+        return jsonify({'fileNames': file_names, 'rows': out_rows})
     except Exception as e:
         return make_response(jsonify({'error': str(e)}), 500)
 
@@ -149,98 +214,78 @@ def process_json():
         if not xml_items:
             return make_response(jsonify({'error': 'Missing xmlFiles'}), 400)
 
-        # Resolve default files
-        default_map = (Path.home() / 'Desktop' / 'Test Folder' / 'Map Updated 8152025.xlsx')
-        if not default_map.exists():
-            default_map = Path.home() / 'Desktop' / 'Test Folder' / 'Map_AutoDerived.csv'
-        default_dp = Path.home() / 'Desktop' / 'Test Folder' / 'TPA Data Points_PE_Module_FeeUI - Wave 1 (1).xlsx'
-        if not (default_map.exists() and default_dp.exists()):
-            return make_response(jsonify({'error': 'Default Map/Data Points not found on server. Place them in Desktop/Test Folder.'}), 400)
-
-        mod = load_working_logic_module()
-        parse_map_workbook = mod['parse_map_workbook']
-        read_xlsx_named_sheet_rows = mod['read_xlsx_named_sheet_rows']
-        parse_lov = mod['parse_lov']
-        choose_value_for_map_entry = mod['choose_value_for_map_entry']
-        _enforce_yes_no = mod['_enforce_yes_no']
-        fallback_from_lov = mod['fallback_from_lov']
-        pick_from_options_allowed = mod['pick_from_options_allowed']
-        normalize_text = mod['normalize_text']
-
-        # Read template rows
-        rows = read_xlsx_named_sheet_rows(default_dp, 'Plan Express Data Points')
-        header = rows[0]
-        header_norm = [h.strip() for h in header]
-        try:
-            i_prompt = header_norm.index('PROMPT')
-        except ValueError:
-            i_prompt = next((i for i, h in enumerate(header) if 'PROMPT' in (h or '')), -1)
-        i_options = header_norm.index('Options Allowed') if 'Options Allowed' in header_norm else -1
-        i_page = header_norm.index('Page') if 'Page' in header_norm else -1
-        i_seq = header_norm.index('Seq') if 'Seq' in header_norm else -1
-
-        map_data = parse_map_workbook(default_map)
-        lov = parse_lov(default_dp)
-
-        # Parse XML contents using the Working Logic helper (requires a temp file path)
-        # We will inline a simple XML parser for LinkName/PlanData here to avoid temp files
-        import xml.etree.ElementTree as ET
-        from dataclasses import dataclass
-
-        @dataclass
-        class LinkNameFlag:
-            selected: int
-            insert: int
-            text: str | None = None
-
-        def parse_xml_flags_from_string(xml_str: str):
-            flags = {}
-            root = ET.fromstring(xml_str)
-            for ln in root.findall('.//LinkName'):
-                name = (ln.get('value') or '').strip()
-                if not name: continue
-                sel = int(ln.get('selected') or '0') if (ln.get('selected') or '0').isdigit() else 0
-                ins = int(ln.get('insert') or '0') if (ln.get('insert') or '0').isdigit() else 0
-                txt = (ln.text or '').strip() or None
-                flags[name] = LinkNameFlag(sel, ins, txt)
-            for pd in root.findall('.//PlanData'):
-                name = (pd.get('FieldName') or '').strip()
-                if not name: continue
-                txt = (pd.text or '').strip() or None
-                if name not in flags:
-                    flags[name] = LinkNameFlag(1, 0, txt)
-                elif txt and not flags[name].text:
-                    flags[name].text = txt
-            return flags
+        # Prefer packaged/user assets
+        packaged_map = load_map_entries()
+        packaged_opts = load_options_by_prompt()
+        if not (packaged_map and packaged_opts):
+            return make_response(jsonify({'error': 'No packaged Map/Options found. Use /process with CSV uploads.'}), 400)
 
         file_names = [item.get('name') or f'file_{i}.xml' for i, item in enumerate(xml_items)]
         flags_per_file = [parse_xml_flags_from_string(item.get('content') or '') for item in xml_items]
 
-        out_rows = []
-        for r in rows[1:]:
-            prompt = normalize_text(r[i_prompt] if 0 <= i_prompt < len(r) else '')
-            if not prompt:
-                continue
-            options = (r[i_options] if (0 <= i_options < len(r)) else '').strip()
-            page = (r[i_page] if (0 <= i_page < len(r)) else '').strip()
-            seq = (r[i_seq] if (0 <= i_seq < len(r)) else '').strip()
+        map_data = {}
+        for e in packaged_map:
+            ptxt = normalize_text(str(e.get('prompt') or ''))
+            if ptxt:
+                map_data[ptxt] = e
+
+        out_rows: List[Dict[str, Any]] = []
+        for e in packaged_map:
+            orig_prompt = str(e.get('prompt') or '')
+            prompt = normalize_text(orig_prompt)
+            options = packaged_opts.get(orig_prompt, '')
             me = map_data.get(prompt)
             values = {}
             for fname, flags in zip(file_names, flags_per_file):
                 val = None
                 if me:
-                    val = mod['choose_value_for_map_entry'](me, options, flags, prompt)
-                    val = mod['_enforce_yes_no'](prompt, options, val, flags, me, strict=False)
+                    val = choose_value_for_map_entry(me, options, flags, prompt)
+                    val = enforce_yes_no(prompt, options, val, flags, me, strict=False)
                 if val is None:
-                    val = mod['fallback_from_lov'](page, seq, options, lov)
-                if val is None:
-                    pick = mod['pick_from_options_allowed'](options)
+                    pick = pick_from_options_allowed(options)
                     if pick:
                         val = pick
                 values[fname] = val if val is not None else ''
-            out_rows.append({'promptText': prompt, 'values': values})
+            out_rows.append({'promptText': orig_prompt, 'values': values})
 
         return jsonify({'fileNames': file_names, 'rows': out_rows})
+    except Exception as e:
+        return make_response(jsonify({'error': str(e)}), 500)
+
+
+@app.route('/admin/import-json', methods=['POST'])
+def import_json():
+    """Persist Map/Options JSON to user store (~/.xml-prompt-filler). Body: { map: [...], options: {...} }"""
+    try:
+        data = request.get_json(silent=True) or {}
+        entries = data.get('map')
+        options = data.get('options')
+        if not isinstance(entries, list) or not isinstance(options, dict):
+            return make_response(jsonify({'error': 'Body must include map: [] and options: {}'}), 400)
+        store_dir = Path.home() / '.xml-prompt-filler'
+        store_dir.mkdir(parents=True, exist_ok=True)
+        (store_dir / 'defaultMap.json').write_text(json.dumps(entries, indent=2))
+        (store_dir / 'optionsByPrompt.json').write_text(json.dumps(options, indent=2))
+        return jsonify({'ok': True, 'saved': str(store_dir)})
+    except Exception as e:
+        return make_response(jsonify({'error': str(e)}), 500)
+
+
+@app.route('/admin/import-csv', methods=['POST'])
+def import_csv():
+    """Persist uploaded CSVs (map_csv, datapoints_csv) as JSON in user store."""
+    try:
+        map_csv = request.files.get('map_csv')
+        dp_csv = request.files.get('datapoints_csv')
+        if not (map_csv and dp_csv):
+            return make_response(jsonify({'error': 'Upload map_csv and datapoints_csv files (CSV only)'}), 400)
+        entries = _parse_csv_map(map_csv)
+        options = _parse_csv_options(dp_csv)
+        store_dir = Path.home() / '.xml-prompt-filler'
+        store_dir.mkdir(parents=True, exist_ok=True)
+        (store_dir / 'defaultMap.json').write_text(json.dumps(entries, indent=2))
+        (store_dir / 'optionsByPrompt.json').write_text(json.dumps(options, indent=2))
+        return jsonify({'ok': True, 'saved': str(store_dir), 'entries': len(entries), 'options': len(options)})
     except Exception as e:
         return make_response(jsonify({'error': str(e)}), 500)
 

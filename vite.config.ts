@@ -110,7 +110,7 @@ export default defineConfig({
             req.on('data', (chunk) => { body += chunk; });
             req.on('end', () => {
               try {
-                const py = spawn('python3', [path.join(__dirname, 'server', 'process_local.py')]);
+                const py = spawn('python3', [path.join(__dirname, 'server', 'run_process_local.py')]);
                 let out = '';
                 let err = '';
                 py.stdout.on('data', (d) => { out += d.toString(); });
@@ -213,7 +213,7 @@ export default defineConfig({
             req.on('data', (chunk: any) => { body += chunk; });
             req.on('end', () => {
               try {
-                const py = spawn('python3', [path.join(__dirname, 'server', 'process_local.py')]);
+                const py = spawn('python3', [path.join(__dirname, 'server', 'run_process_local.py')]);
                 let out = '';
                 let err = '';
                 py.stdout.on('data', (d: any) => { out += d.toString(); });
