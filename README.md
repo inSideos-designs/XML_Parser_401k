@@ -59,6 +59,10 @@ python3 run_xml_prompt_filler.py --source /path/to/xmls
 ```
 Outputs: `output.csv` and `output.json` in the project folder.
 
+On Windows, you can double‑click `Run XML Prompt Filler.bat`:
+- If you have XMLs in `input\` or `samples\` under the project, it will use them automatically.
+- Or drag a folder of XMLs onto the BAT file, or run: `Run XML Prompt Filler.bat "C:\\path\\to\\xmls"`.
+
 ### A/B Reliability Test
 Run two processor variants on the same XMLs and diff results:
 ```

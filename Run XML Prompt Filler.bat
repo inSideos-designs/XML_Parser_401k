@@ -18,11 +18,24 @@ if %ERRORLEVEL% neq 0 (
   set "PY=python"
 )
 
-%PY% "%CD%\run_xml_prompt_filler.py"
+set "XML_DIR="
+if not "%~1"=="" (
+  set "XML_DIR=%~1"
+) else (
+  if exist "%CD%\input\*.xml" (
+    set "XML_DIR=%CD%\input"
+  ) else if exist "%CD%\samples\*.xml" (
+    set "XML_DIR=%CD%\samples"
+  ) else (
+    set "XML_DIR=%CD%"
+  )
+)
+
+echo Using XML directory: %XML_DIR%
+%PY% "%CD%\run_xml_prompt_filler.py" --source "%XML_DIR%"
 if %ERRORLEVEL% neq 0 (
   echo.
   echo Run failed. See messages above.
 )
 echo.
 pause
-
