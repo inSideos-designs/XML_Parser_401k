@@ -49,11 +49,52 @@ Optional server import endpoints (if you run `python3 server/app.py`):
 - POST `/admin/import-json` with body `{ map: [...], options: {...} }`.
 
 ## CLI (Batch, no UI)
-Put XMLs in `~/Desktop/Test Folder` (or edit `SOURCE_DIR` at the top of `run_xml_prompt_filler.py`), then:
+- Run locally with autodetect (uses `samples/`, then `input/`, else current directory if it has XMLs):
 ```
 python3 run_xml_prompt_filler.py
 ```
+- Or specify an XML folder explicitly:
+```
+python3 run_xml_prompt_filler.py --source /path/to/xmls
+```
 Outputs: `output.csv` and `output.json` in the project folder.
+
+### A/B Reliability Test
+Run two processor variants on the same XMLs and diff results:
+```
+python3 ab_test.py --xml-dir /path/to/xmls \
+  [--variant-b server.process_local_b] \
+  [--verified-csv /path/to/verified.csv]
+```
+Outputs: `output_A.csv`, `output_B.csv`, `ab_diff.csv` (and `mismatches_*.csv` if `--verified-csv` supplied).
+
+### Align To Verified Template
+Create an aligned CSV using a verified template (CSV preferred; XLSX supported with helpers):
+```
+python3 export_wave2_to_template_csv_v2.py \
+  --verified-csv /path/to/verified.csv \
+  --xml-dir /path/to/xmls \
+  --out output_wave2_template.csv
+```
+Or, if you must use XLSX, provide a helpers module that exposes
+`read_xlsx_named_sheet_rows` and `normalize_text`:
+```
+python3 export_wave2_to_template_csv_v2.py \
+  --verified-xlsx /path/to/verified.xlsx \
+  --verified-sheet "Plan Express Data Points" \
+  --helpers /path/to/fill_plan_data.py \
+  --xml-dir /path/to/xmls
+```
+
+### Diff Against Verified
+Compare an aligned CSV to a verified dataset:
+```
+python3 diff_wave2_vs_verified.py \
+  --aligned-csv output_wave2_template.csv \
+  --verified-csv /path/to/verified.csv \
+  --out wave2_mismatches.csv
+```
+Or using XLSX + helpers as above with `--verified-xlsx` and `--helpers`.
 
 ## Configuration Sources
 Load order used by the GUI and CLI:
