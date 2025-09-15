@@ -18,3 +18,7 @@ output.csv
 output.json
 Map.csv
 PlanExpress.csv
+ab_diff.csv
+output_*.csv
+wave2_*.csv
+output_wave2_template*.csv

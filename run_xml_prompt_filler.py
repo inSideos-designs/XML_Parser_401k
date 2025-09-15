@@ -19,8 +19,23 @@ import sys
 import subprocess
 from pathlib import Path
 
-# Configure the default XML source directory (matches existing scripts)
-SOURCE_DIR = Path.home() / 'Desktop' / 'Test Folder'
+import argparse
+
+# Determine a sensible default XML source directory without hardcoding Desktop
+def default_source_dir() -> Path:
+    candidates = [
+        Path(__file__).resolve().parent / 'samples',
+        Path(__file__).resolve().parent / 'input',
+        Path.cwd(),
+    ]
+    for c in candidates:
+        try:
+            if c.exists() and any(p.suffix.lower() == '.xml' for p in c.iterdir()):
+                return c
+        except Exception:
+            continue
+    # Fallback to project root
+    return Path(__file__).resolve().parent
 
 ROOT = Path(__file__).resolve().parent
 PROCESSOR = ROOT / 'server' / 'process_local.py'
@@ -74,8 +89,13 @@ def run_processor(payload: dict) -> dict:
 
 
 def main() -> int:
-    print("Preparing payload from:", SOURCE_DIR)
-    payload = build_payload(SOURCE_DIR)
+    ap = argparse.ArgumentParser(description='Run XML Prompt Filler locally')
+    ap.add_argument('--source', '-s', type=str, default=None, help='Directory containing .xml files (default: autodetect samples/input/cwd)')
+    args = ap.parse_args()
+
+    src_dir = Path(args.source).expanduser() if args.source else default_source_dir()
+    print("Preparing payload from:", src_dir)
+    payload = build_payload(src_dir)
     print(f"Found {len(payload['xmlFiles'])} XML files. Running processor…")
     data = run_processor(payload)
     # Always keep JSON for debugging/transforms
