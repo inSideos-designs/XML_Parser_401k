@@ -1,25 +1,9 @@
 # Python
-__pycache__/
-*.py[cod]
-*$py.class
 *.so
 .Python
 venv/
 env/
 .venv/
-
-# Database
-*.db
-*.sqlite3
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Data files
-*.xlsx
-*.xls
-*.csv
 
 # IDE
 .idea/
@@ -29,3 +13,6 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Windows
+Thumbs.db
