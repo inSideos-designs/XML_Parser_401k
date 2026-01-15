@@ -1,0 +1,43 @@
+{% if runs %}
+<table class="history-table">
+    <thead>
+        <tr>
+            <th>Date</th>
+            <th>Input Folder</th>
+            <th>Status</th>
+            <th>Plans</th>
+            <th>Rows</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for run in runs %}
+        <tr>
+            <td>{{ run.created_at[:16] if run.created_at else 'N/A' }}</td>
+            <td class="path-cell" title="{{ run.input_dir }}">{{ run.input_dir.split('/')[-1] if run.input_dir else 'N/A' }}</td>
+            <td>
+                <span class="status-badge status-{{ run.status }}">
+                    {{ run.status }}
+                </span>
+            </td>
+            <td>{{ run.xml_count if run.xml_count else '-' }}</td>
+            <td>{{ run.row_count if run.row_count else '-' }}</td>
+            <td>
+                <button class="btn-small" onclick="rerunBatch('{{ run.id }}', '{{ run.input_dir }}', '{{ run.map_path or '' }}', '{{ run.datapoints_path or '' }}', '{{ run.out_csv_path or '' }}')">
+                    Re-run
+                </button>
+                <button class="btn-small btn-danger"
+                        hx-delete="/api/history/{{ run.id }}"
+                        hx-target="#history-container"
+                        hx-swap="innerHTML"
+                        hx-confirm="Delete this history entry?">
+                    Delete
+                </button>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="empty-message">No batch runs yet. Start a new batch above.</p>
+{% endif %}

@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Plan Express Batch Filler</title>
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <script src="https://unpkg.com/htmx.org@1.9.10/dist/ext/sse.js"></script>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Plan Express Batch Filler</h1>
+            <p class="subtitle">Process XML files and generate Plan Express CSV</p>
+        </header>
+
+        <main>
+            <section class="card">
+                <h2>New Batch</h2>
+                <form id="batch-form">
+                    <div class="form-group">
+                        <label for="input_dir">XML Files Folder <span class="required">*</span></label>
+                        <div class="input-with-button">
+                            <input type="text" id="input_dir" name="input_dir"
+                                   placeholder="/path/to/xml/folder" required
+                                   hx-get="/api/files/autodetect"
+                                   hx-trigger="change"
+                                   hx-target="#autodetect-status"
+                                   hx-include="[name='input_dir']">
+                            <button type="button" class="btn-secondary" onclick="browseFolder('input_dir')">Browse</button>
+                        </div>
+                        <div id="autodetect-status" class="status-message"></div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="map_path">Map Workbook <span class="optional">(default loaded)</span></label>
+                        <div class="input-with-button">
+                            <input type="text" id="map_path" name="map_path"
+                                   value="{{ default_map }}"
+                                   placeholder="Auto-detected if left empty">
+                            <button type="button" class="btn-secondary" onclick="browseFile('map_path', '.xlsx')">Browse</button>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="datapoints_path">Data Points Workbook <span class="optional">(auto-detected)</span></label>
+                        <div class="input-with-button">
+                            <input type="text" id="datapoints_path" name="datapoints_path"
+                                   placeholder="Auto-detected if left empty">
+                            <button type="button" class="btn-secondary" onclick="browseFile('datapoints_path', '.xlsx')">Browse</button>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="out_csv_path">Output CSV <span class="optional">(optional)</span></label>
+                        <div class="input-with-button">
+                            <input type="text" id="out_csv_path" name="out_csv_path"
+                                   placeholder="Defaults to input folder">
+                            <button type="button" class="btn-secondary" onclick="browseFile('out_csv_path', '.csv')">Browse</button>
+                        </div>
+                    </div>
+
+                    <button type="submit" class="btn-primary" id="start-btn">
+                        Start Batch Processing
+                    </button>
+                </form>
+            </section>
+
+            <section id="progress-section" class="card" style="display: none;">
+                <h2>Progress</h2>
+                <div id="progress-container">
+                    <div class="progress-header">
+                        <span id="progress-phase">Initializing...</span>
+                        <span id="progress-counter"></span>
+                    </div>
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="progress-fill" style="width: 0%"></div>
+                    </div>
+                    <p id="progress-message" class="status-message"></p>
+                    <p id="progress-file" class="current-file"></p>
+                </div>
+            </section>
+
+            <section id="result-section" class="card" style="display: none;">
+                <h2>Results</h2>
+                <div id="result-container">
+                    <div id="result-status"></div>
+                    <div id="result-actions" style="display: none;">
+                        <button class="btn-primary" id="download-btn">Download CSV</button>
+                        <button class="btn-secondary" id="preview-btn">Preview Data</button>
+                    </div>
+                </div>
+            </section>
+
+            <section id="preview-section" class="card" style="display: none;">
+                <h2>Preview <span id="preview-info"></span></h2>
+                <div class="table-wrapper">
+                    <table id="preview-table">
+                        <thead id="preview-header"></thead>
+                        <tbody id="preview-body"></tbody>
+                    </table>
+                </div>
+                <div id="preview-pagination"></div>
+            </section>
+
+            <section class="card">
+                <h2>Recent Runs</h2>
+                <div id="history-container" hx-get="/partials/history" hx-trigger="load">
+                    Loading history...
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- File Browser Modal -->
+    <div id="file-browser-modal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Select File/Folder</h3>
+                <button class="close-btn" onclick="closeFileBrowser()">&times;</button>
+            </div>
+            <div id="file-browser-content"></div>
+            <div class="modal-footer">
+                <button class="btn-secondary" onclick="closeFileBrowser()">Cancel</button>
+                <button class="btn-primary" id="select-btn" onclick="selectPath()">Select</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentJobId = null;
+        let currentTarget = null;
+        let selectedPath = null;
+        let eventSource = null;
+
+        // Form submission
+        document.getElementById('batch-form').addEventListener('submit', async function(e) {
+            e.preventDefault();
+
+            const formData = {
+                input_dir: document.getElementById('input_dir').value,
+                map_path: document.getElementById('map_path').value,
+                datapoints_path: document.getElementById('datapoints_path').value,
+                out_csv_path: document.getElementById('out_csv_path').value
+            };
+
+            document.getElementById('start-btn').disabled = true;
+            document.getElementById('start-btn').textContent = 'Processing...';
+            document.getElementById('progress-section').style.display = 'block';
+            document.getElementById('result-section').style.display = 'none';
+            document.getElementById('preview-section').style.display = 'none';
+
+            try {
+                const response = await fetch('/api/batch/start', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(formData)
+                });
+                const data = await response.json();
+
+                if (data.error) {
+                    showError(data.error);
+                    return;
+                }
+
+                currentJobId = data.job_id;
+                startProgressStream(data.job_id);
+            } catch (error) {
+                showError('Failed to start batch: ' + error.message);
+            }
+        });
+
+        function startProgressStream(jobId) {
+            if (eventSource) {
+                eventSource.close();
+            }
+
+            eventSource = new EventSource(`/api/batch/progress/${jobId}`);
+
+            eventSource.onmessage = function(event) {
+                const data = JSON.parse(event.data);
+
+                if (data.type === 'progress') {
+                    updateProgress(data);
+                } else if (data.type === 'complete') {
+                    eventSource.close();
+                    showResult(data);
+                } else if (data.type === 'error') {
+                    eventSource.close();
+                    showError(data.message);
+                }
+            };
+
+            eventSource.onerror = function() {
+                eventSource.close();
+            };
+        }
+
+        function updateProgress(data) {
+            const percent = data.total > 0 ? (data.current / data.total * 100) : 0;
+            document.getElementById('progress-fill').style.width = percent + '%';
+            document.getElementById('progress-phase').textContent = formatPhase(data.phase);
+            document.getElementById('progress-counter').textContent =
+                data.total > 0 ? `${data.current} / ${data.total}` : '';
+            document.getElementById('progress-message').textContent = data.message || '';
+            document.getElementById('progress-file').textContent =
+                data.xml_name ? `Current file: ${data.xml_name}` : '';
+        }
+
+        function formatPhase(phase) {
+            const phases = {
+                'init': 'Initializing',
+                'parsing_xml': 'Parsing XML Files',
+                'processing_rows': 'Processing Rows',
+                'writing_csv': 'Writing CSV',
+                'complete': 'Complete',
+                'error': 'Error'
+            };
+            return phases[phase] || phase;
+        }
+
+        function showResult(data) {
+            document.getElementById('start-btn').disabled = false;
+            document.getElementById('start-btn').textContent = 'Start Batch Processing';
+            document.getElementById('result-section').style.display = 'block';
+
+            const statusDiv = document.getElementById('result-status');
+            const actionsDiv = document.getElementById('result-actions');
+
+            if (data.success) {
+                statusDiv.innerHTML = `
+                    <div class="success-message">
+                        <strong>Success!</strong> ${data.message}<br>
+                        <small>Output: ${data.csv_path}</small>
+                    </div>
+                `;
+                actionsDiv.style.display = 'flex';
+
+                document.getElementById('download-btn').onclick = () => {
+                    window.location.href = `/api/batch/download/${currentJobId}`;
+                };
+                document.getElementById('preview-btn').onclick = () => loadPreview(1);
+            } else {
+                statusDiv.innerHTML = `
+                    <div class="error-message">
+                        <strong>Error:</strong> ${data.message}
+                    </div>
+                `;
+                actionsDiv.style.display = 'none';
+            }
+
+            // Refresh history
+            htmx.trigger('#history-container', 'load');
+        }
+
+        function showError(message) {
+            document.getElementById('start-btn').disabled = false;
+            document.getElementById('start-btn').textContent = 'Start Batch Processing';
+            document.getElementById('result-section').style.display = 'block';
+            document.getElementById('result-status').innerHTML = `
+                <div class="error-message">
+                    <strong>Error:</strong> ${message}
+                </div>
+            `;
+            document.getElementById('result-actions').style.display = 'none';
+        }
+
+        async function loadPreview(page) {
+            if (!currentJobId) return;
+
+            const response = await fetch(`/api/batch/preview/${currentJobId}?page=${page}`);
+            const data = await response.json();
+
+            if (data.error) {
+                alert(data.error);
+                return;
+            }
+
+            document.getElementById('preview-section').style.display = 'block';
+            document.getElementById('preview-info').textContent =
+                `(${data.total_rows} rows, page ${data.page})`;
+
+            // Render header
+            const headerHtml = '<tr>' + data.headers.map(h => `<th>${escapeHtml(h)}</th>`).join('') + '</tr>';
+            document.getElementById('preview-header').innerHTML = headerHtml;
+
+            // Render body
+            const bodyHtml = data.rows.map(row =>
+                '<tr>' + row.map(cell => `<td>${escapeHtml(cell || '')}</td>`).join('') + '</tr>'
+            ).join('');
+            document.getElementById('preview-body').innerHTML = bodyHtml;
+
+            // Pagination
+            let paginationHtml = '';
+            if (page > 1) {
+                paginationHtml += `<button onclick="loadPreview(${page - 1})">Previous</button>`;
+            }
+            if (data.has_more) {
+                paginationHtml += `<button onclick="loadPreview(${page + 1})">Next</button>`;
+            }
+            document.getElementById('preview-pagination').innerHTML = paginationHtml;
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // File browser functions
+        function browseFolder(targetId) {
+            currentTarget = targetId;
+            openFileBrowser('folder', '');
+        }
+
+        function browseFile(targetId, filter) {
+            currentTarget = targetId;
+            openFileBrowser('file', filter);
+        }
+
+        async function openFileBrowser(mode, filter) {
+            const startPath = document.getElementById(currentTarget).value || '';
+            document.getElementById('file-browser-modal').style.display = 'flex';
+
+            const response = await fetch(`/partials/file-browser?path=${encodeURIComponent(startPath || '')}&mode=${mode}&filter=${filter}&target=${currentTarget}`);
+            document.getElementById('file-browser-content').innerHTML = await response.text();
+        }
+
+        function closeFileBrowser() {
+            document.getElementById('file-browser-modal').style.display = 'none';
+            currentTarget = null;
+            selectedPath = null;
+        }
+
+        function selectPath() {
+            if (selectedPath && currentTarget) {
+                document.getElementById(currentTarget).value = selectedPath;
+                // Trigger change event for auto-detection
+                document.getElementById(currentTarget).dispatchEvent(new Event('change'));
+            }
+            closeFileBrowser();
+        }
+
+        function navigateTo(path) {
+            const mode = document.querySelector('#file-browser-content [data-mode]')?.dataset.mode || 'folder';
+            const filter = document.querySelector('#file-browser-content [data-filter]')?.dataset.filter || '';
+            fetch(`/partials/file-browser?path=${encodeURIComponent(path)}&mode=${mode}&filter=${filter}&target=${currentTarget}`)
+                .then(r => r.text())
+                .then(html => {
+                    document.getElementById('file-browser-content').innerHTML = html;
+                });
+        }
+
+        function selectItem(path, isDir) {
+            const mode = document.querySelector('#file-browser-content [data-mode]')?.dataset.mode || 'folder';
+
+            if (isDir && mode === 'file') {
+                // Navigate into directory
+                navigateTo(path);
+            } else {
+                // Select this item
+                selectedPath = path;
+                document.querySelectorAll('.file-item').forEach(el => el.classList.remove('selected'));
+                event.currentTarget.classList.add('selected');
+            }
+        }
+
+        // Handle autodetect response
+        document.body.addEventListener('htmx:afterSwap', function(event) {
+            if (event.detail.target.id === 'autodetect-status') {
+                try {
+                    const data = JSON.parse(event.detail.target.textContent);
+                    event.detail.target.innerHTML = '';
+
+                    let messages = [];
+                    if (data.xml_count !== undefined) {
+                        messages.push(`Found ${data.xml_count} XML files`);
+                    }
+                    if (data.map_path) {
+                        document.getElementById('map_path').value = data.map_path;
+                        messages.push(`Map: ${data.map_path.split('/').pop()}`);
+                    }
+                    if (data.datapoints_path) {
+                        document.getElementById('datapoints_path').value = data.datapoints_path;
+                        messages.push(`Data Points: ${data.datapoints_path.split('/').pop()}`);
+                    }
+
+                    if (messages.length > 0) {
+                        event.detail.target.innerHTML = `<span class="success-text">${messages.join(' | ')}</span>`;
+                    }
+                } catch (e) {
+                    // Not JSON, keep as is
+                }
+            }
+        });
+
+        // Rerun from history
+        function rerunBatch(runId, inputDir, mapPath, datapointsPath, outCsvPath) {
+            document.getElementById('input_dir').value = inputDir || '';
+            document.getElementById('map_path').value = mapPath || '';
+            document.getElementById('datapoints_path').value = datapointsPath || '';
+            document.getElementById('out_csv_path').value = outCsvPath || '';
+            window.scrollTo(0, 0);
+        }
+    </script>
+</body>
+</html>

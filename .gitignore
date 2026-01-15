@@ -1,24 +1,31 @@
-node_modules/
-dist/
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+.venv/
+
+# Database
+*.db
+*.sqlite3
+
+# OS
 .DS_Store
-.env
-*.log
+Thumbs.db
+
+# Data files
+*.xlsx
+*.xls
+*.csv
+
+# IDE
 .idea/
 .vscode/
-venv/
-.venv/
-server/.venv/
-*.pyc
-__pycache__/
 *.swp
 *.swo
 
-# Local artifacts
-output.csv
-output.json
-Map.csv
-PlanExpress.csv
-ab_diff.csv
-output_*.csv
-wave2_*.csv
-output_wave2_template*.csv
+# Logs
+*.log

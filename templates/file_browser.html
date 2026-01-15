@@ -1,0 +1,42 @@
+<div data-mode="{{ mode }}" data-filter="{{ filter }}">
+    <div class="browser-path">
+        <span class="current-path">{{ current_path }}</span>
+    </div>
+
+    <div class="browser-nav">
+        {% if parent_path %}
+        <button class="btn-small" onclick="navigateTo('{{ parent_path }}')">&larr; Up</button>
+        {% endif %}
+    </div>
+
+    <div class="file-list">
+        {% for item in items %}
+        <div class="file-item {% if item.is_dir %}folder{% else %}file{% endif %}"
+             onclick="selectItem('{{ item.path }}', {{ 'true' if item.is_dir else 'false' }})"
+             ondblclick="{% if item.is_dir %}navigateTo('{{ item.path }}'){% endif %}">
+            <span class="file-icon">
+                {% if item.is_dir %}
+                    📁
+                {% elif item.extension == '.xml' %}
+                    📄
+                {% elif item.extension in ['.xlsx', '.xls'] %}
+                    📊
+                {% elif item.extension == '.csv' %}
+                    📋
+                {% else %}
+                    📄
+                {% endif %}
+            </span>
+            <span class="file-name">{{ item.name }}</span>
+        </div>
+        {% else %}
+        <p class="empty-message">No files found</p>
+        {% endfor %}
+    </div>
+
+    {% if mode == 'folder' %}
+    <p class="browser-hint">Select a folder and click "Select", or double-click to navigate</p>
+    {% else %}
+    <p class="browser-hint">Select a file and click "Select", or double-click folders to navigate</p>
+    {% endif %}
+</div>
